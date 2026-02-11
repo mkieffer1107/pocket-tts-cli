@@ -33,12 +33,38 @@
     version: number;
     cloneDir: string;
   };
+  type CloneProgressStage =
+    | "starting"
+    | "downloading_media"
+    | "extracting_audio"
+    | "cloning_voice"
+    | "saving_profile"
+    | "finalizing";
+  type CloneProgressEvent =
+    | {
+        type: "stage";
+        stage: CloneProgressStage;
+        message: string;
+      }
+    | {
+        type: "result";
+        voiceName: string;
+        version: number;
+        cloneDir: string;
+      }
+    | {
+        type: "error";
+        error: string;
+      };
   type CloneSuccessState = {
     voiceName: string;
     version: number;
     cloneDir: string;
   };
   const CLONE_VOICE_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
+  const STEFAN_EXAMPLE_SOURCE_URL = "https://www.youtube.com/watch?v=UF8uR6Z6KLc";
+  const STEFAN_EXAMPLE_START = "2:31";
+  const STEFAN_EXAMPLE_VOICE_NAME = "stefan";
 
   let prompt = $state("The sun is shining, and the birds are singing.");
   let availableVoices = $state<LocalVoiceOption[]>([]);
@@ -71,6 +97,7 @@
   let cloneVoiceName = $state("");
   let cloneCacheDownloads = $state(true);
   let cloning = $state(false);
+  let cloneProgress = $state<string | null>(null);
   let cloneError = $state<string | null>(null);
   let cloneSuccess = $state<CloneSuccessState | null>(null);
   let activeMediaRecorder: MediaRecorder | null = null;
@@ -291,6 +318,26 @@
       stopRecording();
     }
     cloneSourceMode = mode;
+    cloneProgress = null;
+    cloneError = null;
+    cloneSuccess = null;
+  }
+
+  function openStefanClonePreset() {
+    if (recording) {
+      stopRecording();
+    }
+    workflowMode = "clone";
+    cloneSourceMode = "url";
+    cloneSourceUrl = STEFAN_EXAMPLE_SOURCE_URL;
+    cloneSourceFile = null;
+    cloneRecordedFile = null;
+    cloneRecordedDurationSec = null;
+    cloneStart = STEFAN_EXAMPLE_START;
+    cloneEnd = "";
+    cloneVoiceName = STEFAN_EXAMPLE_VOICE_NAME;
+    cloneCacheDownloads = false;
+    cloneProgress = null;
     cloneError = null;
     cloneSuccess = null;
   }
@@ -321,7 +368,66 @@
     cloneSourceFile = input.files?.[0] ?? null;
   }
 
+  async function readCloneProgressStream(response: Response): Promise<CloneVoiceResponse> {
+    if (!response.body) {
+      throw new Error("Clone response did not include a progress stream.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result: CloneVoiceResponse | null = null;
+
+    const handleLine = (line: string) => {
+      let event: CloneProgressEvent;
+      try {
+        event = JSON.parse(line) as CloneProgressEvent;
+      } catch {
+        return;
+      }
+
+      if (event.type === "stage") {
+        cloneProgress = event.message;
+        return;
+      }
+      if (event.type === "error") {
+        throw new Error(event.error || "Voice cloning failed.");
+      }
+      result = {
+        voiceName: event.voiceName,
+        version: event.version,
+        cloneDir: event.cloneDir,
+      };
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const rawLine = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (rawLine !== "") {
+          handleLine(rawLine);
+        }
+        newlineIndex = buffer.indexOf("\n");
+      }
+    }
+
+    const trailing = (buffer + decoder.decode()).trim();
+    if (trailing !== "") {
+      handleLine(trailing);
+    }
+
+    if (result === null) {
+      throw new Error("Voice cloning finished without a result.");
+    }
+    return result;
+  }
+
   async function submitCloneVoice() {
+    cloneProgress = null;
     cloneError = null;
     cloneSuccess = null;
 
@@ -350,6 +456,7 @@
 
     cloning = true;
     try {
+      cloneProgress = "Starting clone job...";
       const formData = new FormData();
       formData.set("sourceMode", cloneSourceMode === "url" ? "url" : "file");
       formData.set("voiceName", voiceName);
@@ -372,16 +479,18 @@
         method: "POST",
         body: formData,
       });
-      const responseText = await response.text();
-      let payload: Record<string, unknown> = {};
-      if (responseText.trim() !== "") {
-        try {
-          payload = JSON.parse(responseText) as Record<string, unknown>;
-        } catch {
-          payload = { error: responseText };
-        }
-      }
+
+      const contentType = response.headers.get("content-type") ?? "";
       if (!response.ok) {
+        const responseText = await response.text();
+        let payload: Record<string, unknown> = {};
+        if (responseText.trim() !== "") {
+          try {
+            payload = JSON.parse(responseText) as Record<string, unknown>;
+          } catch {
+            payload = { error: responseText };
+          }
+        }
         const message =
           typeof payload.error === "string"
             ? payload.error
@@ -389,7 +498,18 @@
         throw new Error(message);
       }
 
-      const result = payload as unknown as CloneVoiceResponse;
+      let result: CloneVoiceResponse;
+      if (contentType.includes("application/x-ndjson")) {
+        result = await readCloneProgressStream(response);
+      } else {
+        const responseText = await response.text();
+        if (responseText.trim() === "") {
+          throw new Error("Voice cloning failed: empty response from server.");
+        }
+        const payload = JSON.parse(responseText) as CloneVoiceResponse;
+        result = payload;
+      }
+
       cloneSuccess = {
         voiceName: result.voiceName,
         version: result.version,
@@ -405,8 +525,10 @@
       cloneStart = "";
       cloneEnd = "";
       cloneVoiceName = "";
+      cloneProgress = null;
     } catch (error) {
       cloneError = error instanceof Error ? error.message : "Voice cloning failed.";
+      cloneProgress = null;
     } finally {
       cloning = false;
     }
@@ -606,26 +728,28 @@
         ></textarea>
 
         <div class="flex gap-3 mt-1 h-9 flex-wrap justify-center">
-          <select
-            class="border-2 rounded p-1"
-            bind:value={selectedVoiceName}
-            onchange={(event) =>
-              handleVoiceNameChange((event.currentTarget as HTMLSelectElement).value)}
-            disabled={loadingVoices || availableVoices.length === 0}
-          >
-            {#each voiceNames as voiceName}
-              <option value={voiceName}>{voiceName}</option>
-            {/each}
-          </select>
-          <select
-            class="border-2 rounded p-1"
-            bind:value={selectedVoiceVersion}
-            disabled={loadingVoices || availableVoices.length === 0}
-          >
-            {#each selectedVoiceVersions as voice}
-              <option value={String(voice.version)}>v{voice.version}</option>
-            {/each}
-          </select>
+          {#if availableVoices.length > 0}
+            <select
+              class="border-2 rounded p-1"
+              bind:value={selectedVoiceName}
+              onchange={(event) =>
+                handleVoiceNameChange((event.currentTarget as HTMLSelectElement).value)}
+              disabled={loadingVoices}
+            >
+              {#each voiceNames as voiceName}
+                <option value={voiceName}>{voiceName}</option>
+              {/each}
+            </select>
+            <select
+              class="border-2 rounded p-1"
+              bind:value={selectedVoiceVersion}
+              disabled={loadingVoices}
+            >
+              {#each selectedVoiceVersions as voice}
+                <option value={String(voice.version)}>v{voice.version}</option>
+              {/each}
+            </select>
+          {/if}
           {#if playing}
             <button class="btn" type="button" onclick={stopSynthesis}>
               Stop
@@ -662,7 +786,14 @@
           <p class="mt-2 text-sm text-red-600 text-center">{voicesError}</p>
         {:else if availableVoices.length === 0}
           <p class="mt-2 text-sm text-gray-600 text-center">
-            No cloned voices found in <code>voices</code>.
+            No cloned voices found.
+            <a
+              href="#voice-cloning"
+              class="font-semibold underline underline-offset-2 hover:no-underline"
+              onclick={openStefanClonePreset}
+            >
+              Set up the Stefan example now
+            </a>
           </p>
         {/if}
 
@@ -714,7 +845,7 @@
         </details>
       </form>
       {:else}
-        <section class="border-2 border-black rounded-lg p-4 bg-white/80 w-full">
+        <section id="voice-cloning" class="border-2 border-black rounded-lg p-4 bg-white/80 w-full">
         <h2 class="text-lg font-semibold text-center">Clone Voice</h2>
         <p class="text-sm text-gray-600 mt-1 text-center">
           Add new voice embeddings to <code>voices/&lt;name&gt;/&lt;version&gt;</code>.
@@ -863,6 +994,10 @@
           <button class="btn w-full justify-center" type="submit" disabled={cloning || recording}>
             {cloning ? "Cloning..." : "Clone voice"}
           </button>
+
+          {#if cloning && cloneProgress}
+            <p class="text-sm text-gray-700">{cloneProgress}</p>
+          {/if}
         </form>
 
         {#if cloneError}
