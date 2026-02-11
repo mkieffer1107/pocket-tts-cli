@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pocket-tts-cli"
+version = "0.1.0"
+description = "YouTube to voice-cloning pipeline with Kyutai Pocket TTS"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+  "huggingface-hub",
+  "pocket-tts",
+  "rich",
+  "scipy>=1.15.3",
+  "yt-dlp>=2026.2.4",
+]
+
+[project.scripts]
+cli = "voice_workbench:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["pocket_tts_youtube_pipeline", "voice_workbench"]
