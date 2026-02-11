@@ -10,6 +10,8 @@ This repo contains a generic pipeline script that:
 
 ## Web Viewer
 
+Play cloned voices through a local website.
+
 ```bash
 cd site
 npm install
