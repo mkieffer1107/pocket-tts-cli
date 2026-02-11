@@ -2,10 +2,10 @@
   import { defaultDevice, init, numpy as np, tree } from "@jax-js/jax";
   import { cachedFetch, safetensors, tokenizers } from "@jax-js/loaders";
   import { AudioLinesIcon, DownloadIcon, GithubIcon } from "@lucide/svelte";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
 
   import DownloadManager from "$lib/common/DownloadManager.svelte";
-  import { createStreamingPlayer } from "./audio";
+  import { createStreamingPlayer, type AudioPlayer } from "./audio";
   import { playTTS } from "./inference";
   import { fromSafetensors, type PocketTTS } from "./pocket-tts";
 
@@ -27,8 +27,13 @@
     url: string;
   };
   type WorkflowMode = "synthesis" | "clone";
-  type CloneSourceMode = "url" | "file";
+  type CloneSourceMode = "url" | "file" | "record";
   type CloneVoiceResponse = {
+    voiceName: string;
+    version: number;
+    cloneDir: string;
+  };
+  type CloneSuccessState = {
     voiceName: string;
     version: number;
     cloneDir: string;
@@ -43,6 +48,8 @@
   let voicesError = $state<string | null>(null);
   let playing = $state(false);
   let audioBlob = $state<Blob | null>(null);
+  let synthesisAbortController: AbortController | null = null;
+  let activeAudioPlayer: AudioPlayer | null = null;
 
   // Advanced options
   let seed = $state<number | null>(null);
@@ -56,13 +63,19 @@
   let cloneSourceMode = $state<CloneSourceMode>("url");
   let cloneSourceUrl = $state("");
   let cloneSourceFile = $state<File | null>(null);
+  let cloneRecordedFile = $state<File | null>(null);
+  let cloneRecordedDurationSec = $state<number | null>(null);
+  let recording = $state(false);
   let cloneStart = $state("");
   let cloneEnd = $state("");
   let cloneVoiceName = $state("");
   let cloneCacheDownloads = $state(true);
   let cloning = $state(false);
   let cloneError = $state<string | null>(null);
-  let cloneSuccess = $state<string | null>(null);
+  let cloneSuccess = $state<CloneSuccessState | null>(null);
+  let activeMediaRecorder: MediaRecorder | null = null;
+  let activeMediaStream: MediaStream | null = null;
+  let recordingStartedAtMs = 0;
 
   async function downloadClipWeights(): Promise<safetensors.File> {
     if (_weights) return _weights;
@@ -163,10 +176,144 @@
     workflowMode = mode;
   }
 
+  function cleanupRecordingResources() {
+    if (activeMediaStream !== null) {
+      for (const track of activeMediaStream.getTracks()) {
+        track.stop();
+      }
+    }
+    activeMediaStream = null;
+    activeMediaRecorder = null;
+  }
+
+  function guessRecordedExtension(mimeType: string): string {
+    if (mimeType.includes("ogg")) return "ogg";
+    if (mimeType.includes("wav")) return "wav";
+    if (mimeType.includes("mp4") || mimeType.includes("m4a")) return "m4a";
+    return "webm";
+  }
+
+  async function startRecording() {
+    cloneError = null;
+    cloneSuccess = null;
+
+    if (typeof window === "undefined") return;
+    if (recording) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      cloneError = "Microphone recording is not available in this browser.";
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      cloneError = "MediaRecorder is not available in this browser.";
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ];
+      const mimeType =
+        mimeCandidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "";
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+
+      activeMediaStream = stream;
+      activeMediaRecorder = recorder;
+      recordingStartedAtMs = Date.now();
+      recording = true;
+      cloneRecordedFile = null;
+      cloneRecordedDurationSec = null;
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+      recorder.onerror = () => {
+        recording = false;
+        cloneError = "Microphone recording failed.";
+        cleanupRecordingResources();
+      };
+      recorder.onstop = () => {
+        const durationSec = (Date.now() - recordingStartedAtMs) / 1000;
+        recording = false;
+
+        const finalMimeType = recorder.mimeType || mimeType || "audio/webm";
+        const recordedBlob = new Blob(chunks, { type: finalMimeType });
+        if (recordedBlob.size === 0) {
+          cloneRecordedFile = null;
+          cloneRecordedDurationSec = null;
+          cloneError = "Recorded audio was empty. Please try again.";
+          cleanupRecordingResources();
+          return;
+        }
+
+        const extension = guessRecordedExtension(finalMimeType);
+        cloneRecordedFile = new File([recordedBlob], `microphone-recording.${extension}`, {
+          type: finalMimeType,
+        });
+        cloneRecordedDurationSec = Number(durationSec.toFixed(1));
+        cleanupRecordingResources();
+      };
+
+      recorder.start(250);
+    } catch (error) {
+      recording = false;
+      cloneRecordedFile = null;
+      cloneRecordedDurationSec = null;
+      cloneError =
+        error instanceof Error
+          ? `Microphone access failed: ${error.message}`
+          : "Microphone access failed.";
+      cleanupRecordingResources();
+    }
+  }
+
+  function stopRecording() {
+    if (!recording || activeMediaRecorder === null) return;
+    if (activeMediaRecorder.state === "inactive") return;
+    try {
+      activeMediaRecorder.stop();
+    } catch {
+      recording = false;
+      cleanupRecordingResources();
+    }
+  }
+
   function setCloneSourceMode(mode: CloneSourceMode) {
+    if (cloneSourceMode === "record" && mode !== "record" && recording) {
+      stopRecording();
+    }
     cloneSourceMode = mode;
     cloneError = null;
     cloneSuccess = null;
+  }
+
+  function tryClonedVoiceNow(voiceName: string, version: number) {
+    selectedVoiceName = voiceName;
+    selectedVoiceVersion = String(version);
+    workflowMode = "synthesis";
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException && error.name === "AbortError";
+  }
+
+  async function stopSynthesis() {
+    synthesisAbortController?.abort();
+    if (activeAudioPlayer !== null) {
+      try {
+        await activeAudioPlayer.stop();
+      } catch {
+        // Best-effort stop; run cleanup handles remaining state.
+      }
+    }
   }
 
   function handleCloneFileChange(event: Event) {
@@ -192,21 +339,31 @@
       cloneError = "Local source file is required.";
       return;
     }
+    if (cloneSourceMode === "record" && cloneRecordedFile === null) {
+      cloneError = "Record a microphone clip first.";
+      return;
+    }
+    if (cloneSourceMode === "record" && recording) {
+      cloneError = "Stop recording before cloning.";
+      return;
+    }
 
     cloning = true;
     try {
       const formData = new FormData();
-      formData.set("sourceMode", cloneSourceMode);
+      formData.set("sourceMode", cloneSourceMode === "url" ? "url" : "file");
       formData.set("voiceName", voiceName);
       if (cloneSourceMode === "url") {
         formData.set("sourceUrl", cloneSourceUrl.trim());
-      } else if (cloneSourceFile) {
+      } else if (cloneSourceMode === "file" && cloneSourceFile) {
         formData.set("sourceFile", cloneSourceFile);
+      } else if (cloneSourceMode === "record" && cloneRecordedFile) {
+        formData.set("sourceFile", cloneRecordedFile);
       }
-      if (cloneStart.trim() !== "") {
+      if (cloneSourceMode !== "record" && cloneStart.trim() !== "") {
         formData.set("start", cloneStart.trim());
       }
-      if (cloneEnd.trim() !== "") {
+      if (cloneSourceMode !== "record" && cloneEnd.trim() !== "") {
         formData.set("end", cloneEnd.trim());
       }
       formData.set("cacheDownloads", String(cloneCacheDownloads));
@@ -233,12 +390,18 @@
       }
 
       const result = payload as unknown as CloneVoiceResponse;
-      cloneSuccess = `Saved ${result.voiceName}/v${result.version} at ${result.cloneDir}`;
+      cloneSuccess = {
+        voiceName: result.voiceName,
+        version: result.version,
+        cloneDir: result.cloneDir,
+      };
       await loadVoices();
       selectedVoiceName = result.voiceName;
       selectedVoiceVersion = String(result.version);
       cloneSourceUrl = "";
       cloneSourceFile = null;
+      cloneRecordedFile = null;
+      cloneRecordedDurationSec = null;
       cloneStart = "";
       cloneEnd = "";
       cloneVoiceName = "";
@@ -251,6 +414,17 @@
 
   onMount(() => {
     void loadVoices();
+  });
+
+  onDestroy(() => {
+    if (activeMediaRecorder !== null && activeMediaRecorder.state !== "inactive") {
+      try {
+        activeMediaRecorder.stop();
+      } catch {
+        // Ignore teardown failures.
+      }
+    }
+    cleanupRecordingResources();
   });
 
   function prepareTextPrompt(text: string): [string, number] {
@@ -282,7 +456,7 @@
     return [text, framesAfterEosGuess];
   }
 
-  async function run() {
+  async function run(signal: AbortSignal) {
     const devices = await init();
     if (devices.includes("webgpu")) {
       defaultDevice("webgpu");
@@ -326,16 +500,30 @@
     embeds = np.concatenate([voiceEmbed, embeds]);
 
     const player = createStreamingPlayer();
+    activeAudioPlayer = player;
     try {
       await playTTS(player, tree.ref(model), embeds, {
         framesAfterEos,
         seed,
         temperature,
         lsdDecodeSteps,
+        signal,
       });
-      audioBlob = player.toWav();
+      if (!signal.aborted) {
+        audioBlob = player.toWav();
+      }
     } finally {
-      await player.close();
+      try {
+        if (signal.aborted) {
+          await player.stop();
+        } else {
+          await player.close();
+        }
+      } finally {
+        if (activeAudioPlayer === player) {
+          activeAudioPlayer = null;
+        }
+      }
     }
   }
 </script>
@@ -382,14 +570,30 @@
     <div class="mt-4 w-full max-w-md workflow-shell">
       {#if workflowMode === "synthesis"}
       <form
+        id="voice-synthesis"
         class="w-full"
         onsubmit={async (event) => {
           event.preventDefault();
+          if (playing) return;
           audioBlob = null;
           playing = true;
+          const abortController = new AbortController();
+          synthesisAbortController = abortController;
           try {
-            await run();
+            await run(abortController.signal);
+          } catch (error) {
+            if (!isAbortError(error)) {
+              console.error(error);
+              alert(
+                error instanceof Error
+                  ? `TTS generation failed: ${error.message}`
+                  : "TTS generation failed.",
+              );
+            }
           } finally {
+            if (synthesisAbortController === abortController) {
+              synthesisAbortController = null;
+            }
             playing = false;
           }
         }}
@@ -422,22 +626,24 @@
               <option value={String(voice.version)}>v{voice.version}</option>
             {/each}
           </select>
-          <button
-            class="btn"
-            type="submit"
-            disabled={
-              playing ||
-              prompt.trim() === "" ||
-              loadingVoices ||
-              availableVoices.length === 0
-            }
-          >
-            {#if playing}
-              <AudioLinesIcon size={20} class="animate-pulse" />
-            {:else}
+          {#if playing}
+            <button class="btn" type="button" onclick={stopSynthesis}>
+              Stop
+            </button>
+          {:else}
+            <button
+              class="btn"
+              type="submit"
+              disabled={
+                prompt.trim() === "" ||
+                loadingVoices ||
+                availableVoices.length === 0
+              }
+            >
+              <AudioLinesIcon size={20} />
               Play
-            {/if}
-          </button>
+            </button>
+          {/if}
 
           {#if audioBlob}
             <a
@@ -526,7 +732,7 @@
               type="button"
               class={`mode-btn ${cloneSourceMode === "url" ? "mode-btn-active" : ""}`}
               onclick={() => setCloneSourceMode("url")}
-              disabled={cloning}
+              disabled={cloning || recording}
             >
               Video URL
             </button>
@@ -534,9 +740,17 @@
               type="button"
               class={`mode-btn ${cloneSourceMode === "file" ? "mode-btn-active" : ""}`}
               onclick={() => setCloneSourceMode("file")}
-              disabled={cloning}
+              disabled={cloning || recording}
             >
               Local file
+            </button>
+            <button
+              type="button"
+              class={`mode-btn ${cloneSourceMode === "record" ? "mode-btn-active" : ""}`}
+              onclick={() => setCloneSourceMode("record")}
+              disabled={cloning || recording}
+            >
+              Record mic
             </button>
           </div>
 
@@ -551,7 +765,7 @@
                 disabled={cloning}
               />
             </label>
-          {:else}
+          {:else if cloneSourceMode === "file"}
             <label class="block text-sm text-gray-700">
               Local media file
               <input
@@ -562,30 +776,68 @@
                 disabled={cloning}
               />
             </label>
+          {:else}
+            <div class="space-y-2">
+              <p class="text-sm text-gray-700">
+                Record a clip from your microphone and use it as the clone source.
+              </p>
+              <div class="flex gap-2 flex-wrap">
+                {#if recording}
+                  <button
+                    type="button"
+                    class="btn"
+                    onclick={stopRecording}
+                    disabled={cloning}
+                  >
+                    Stop recording
+                  </button>
+                  <span class="text-sm text-red-700 self-center">Recording...</span>
+                {:else}
+                  <button
+                    type="button"
+                    class="btn"
+                    onclick={startRecording}
+                    disabled={cloning}
+                  >
+                    Start recording
+                  </button>
+                {/if}
+              </div>
+              {#if cloneRecordedFile}
+                <p class="text-sm text-gray-700">
+                  Recorded clip ready ({cloneRecordedDurationSec ?? 0}s):
+                  <code>{cloneRecordedFile.name}</code>
+                </p>
+              {:else}
+                <p class="text-sm text-gray-600">No microphone clip recorded yet.</p>
+              {/if}
+            </div>
           {/if}
 
-          <div class="grid grid-cols-2 gap-2">
-            <label class="block text-sm text-gray-700">
-              Start (optional)
-              <input
-                type="text"
-                class="block mt-1 w-full border-2 rounded p-2"
-                placeholder="2:31"
-                bind:value={cloneStart}
-                disabled={cloning}
-              />
-            </label>
-            <label class="block text-sm text-gray-700">
-              End (optional)
-              <input
-                type="text"
-                class="block mt-1 w-full border-2 rounded p-2"
-                placeholder="2:45"
-                bind:value={cloneEnd}
-                disabled={cloning}
-              />
-            </label>
-          </div>
+          {#if cloneSourceMode !== "record"}
+            <div class="grid grid-cols-2 gap-2">
+              <label class="block text-sm text-gray-700">
+                Start (optional)
+                <input
+                  type="text"
+                  class="block mt-1 w-full border-2 rounded p-2"
+                  placeholder="2:31"
+                  bind:value={cloneStart}
+                  disabled={cloning}
+                />
+              </label>
+              <label class="block text-sm text-gray-700">
+                End (optional)
+                <input
+                  type="text"
+                  class="block mt-1 w-full border-2 rounded p-2"
+                  placeholder="2:45"
+                  bind:value={cloneEnd}
+                  disabled={cloning}
+                />
+              </label>
+            </div>
+          {/if}
 
           <label class="block text-sm text-gray-700">
             Voice name
@@ -608,7 +860,7 @@
             <span>Cache source downloads in <code>media/downloads</code></span>
           </label>
 
-          <button class="btn w-full justify-center" type="submit" disabled={cloning}>
+          <button class="btn w-full justify-center" type="submit" disabled={cloning || recording}>
             {cloning ? "Cloning..." : "Clone voice"}
           </button>
         </form>
@@ -617,7 +869,16 @@
           <p class="mt-3 text-sm text-red-600 whitespace-pre-wrap">{cloneError}</p>
         {/if}
         {#if cloneSuccess}
-          <p class="mt-3 text-sm text-green-700">{cloneSuccess}</p>
+          <p class="mt-3 text-sm text-green-700">
+            Saved voice <span class="font-semibold">{cloneSuccess.voiceName}</span> (v{cloneSuccess.version}).
+            <a
+              href="#voice-synthesis"
+              class="font-semibold underline underline-offset-2 hover:no-underline"
+              onclick={() => tryClonedVoiceNow(cloneSuccess.voiceName, cloneSuccess.version)}
+            >
+              Try it now
+            </a>
+          </p>
         {/if}
         </section>
       {/if}

@@ -15,6 +15,13 @@ export interface PlayTTSOptions {
   lsdDecodeSteps: number;
   temperature: number;
   noiseClamp: number | null;
+  signal: AbortSignal | null;
+}
+
+function throwIfAborted(signal: AbortSignal | null | undefined): void {
+  if (signal?.aborted) {
+    throw new DOMException("TTS playback was stopped.", "AbortError");
+  }
 }
 
 export async function playTTS(
@@ -27,6 +34,7 @@ export async function playTTS(
     lsdDecodeSteps = 1,
     temperature = 0.7,
     noiseClamp = null,
+    signal = null,
   }: Partial<PlayTTSOptions> = {},
 ): Promise<void> {
   let sequence = model.flowLM.bosEmb.ref.reshape([1, -1]); // [1, 32]
@@ -44,6 +52,8 @@ export async function playTTS(
     let lastTimestamp = performance.now();
 
     for (let step = 0; step < 1000; step++) {
+      throwIfAborted(signal);
+
       let stepKey: np.Array;
       [key, stepKey] = random.split(key);
       const {
@@ -64,6 +74,7 @@ export async function playTTS(
       flowLMState = newFlowLMState;
 
       const isEosData = await isEos.data();
+      throwIfAborted(signal);
       if (isEosData[0] && eosStep === null) {
         console.log(`🛑 EOS at step ${step}!`);
         eosStep = step;
@@ -109,6 +120,7 @@ export async function playTTS(
           );
         }
         await lastAudioPromise;
+        if (signal?.aborted) return;
         await player.playChunk(audioPcm);
       })();
     }

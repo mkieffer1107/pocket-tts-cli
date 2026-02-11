@@ -6,6 +6,9 @@ export interface AudioPlayer {
   /** Play a chunk of PCM samples (Float32Array in range [-1, 1]). */
   playChunk(samples: Float32Array): Promise<void>;
 
+  /** Stop playback immediately and close the audio context. */
+  stop(): Promise<void>;
+
   /** Wait for all queued audio to finish, then close the audio context. */
   close(): Promise<void>;
 
@@ -78,10 +81,21 @@ export function createStreamingPlayer(): AudioPlayer {
   const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
   let nextStartTime = audioCtx.currentTime;
   let lastEndedPromise: Promise<void> = Promise.resolve();
+  let resolveLastEnded: (() => void) | null = null;
   const chunks: Float32Array[] = [];
+  const activeSources = new Set<AudioBufferSourceNode>();
+  let stopped = false;
+
+  async function closeContext() {
+    if (audioCtx.state !== "closed") {
+      await audioCtx.close();
+    }
+  }
 
   return {
     async playChunk(samples: Float32Array) {
+      if (stopped) return;
+
       // Resume audio context if suspended, which is common on mobile after idle
       // periods or keyboard use.
       if (audioCtx.state === "suspended") {
@@ -96,6 +110,7 @@ export function createStreamingPlayer(): AudioPlayer {
       const source = audioCtx.createBufferSource();
       source.buffer = buffer;
       source.connect(audioCtx.destination);
+      activeSources.add(source);
 
       // Schedule this chunk right after the previous one
       const startTime = Math.max(nextStartTime, audioCtx.currentTime);
@@ -104,13 +119,49 @@ export function createStreamingPlayer(): AudioPlayer {
 
       // Track when this source finishes playing
       lastEndedPromise = new Promise((resolve) => {
-        source.onended = () => resolve();
+        let settled = false;
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          resolve();
+          if (resolveLastEnded === settle) {
+            resolveLastEnded = null;
+          }
+        };
+        resolveLastEnded = settle;
+        source.onended = () => {
+          activeSources.delete(source);
+          settle();
+        };
       });
     },
 
+    async stop() {
+      if (stopped) {
+        await closeContext();
+        return;
+      }
+      stopped = true;
+      for (const source of activeSources) {
+        try {
+          source.stop();
+        } catch {
+          // Source may already be stopped.
+        }
+      }
+      activeSources.clear();
+      resolveLastEnded?.();
+      lastEndedPromise = Promise.resolve();
+      await closeContext();
+    },
+
     async close() {
+      if (stopped) {
+        await closeContext();
+        return;
+      }
       await lastEndedPromise;
-      await audioCtx.close();
+      await closeContext();
     },
 
     toWav() {
