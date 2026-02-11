@@ -2,6 +2,7 @@
 runs/
 voices/
 tts_output.wav
+media/
 
 # Virtual environments
 .venv/
