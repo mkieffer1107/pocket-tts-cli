@@ -1,8 +1,8 @@
 # Pocket TTS Voice-Cloning Pipeline
 
 This repo contains a generic pipeline script that:
-1. Downloads audio from a source URL (YouTube/Reddit/etc.) or file as MP3.
-2. Converts it to a mono WAV voice prompt (`ffmpeg`)
+1. Ingests source audio from either a source URL (YouTube/Reddit/etc.) or a local media file.
+2. Extracts requested segments and converts the source to a mono WAV voice prompt (`ffmpeg`)
 3. Saves reusable voice profiles in versioned folders (`runs/voice-clones/<voice>/<version>/`)
 4. Runs Kyutai Pocket TTS voice cloning (`pocket-tts`)
 
