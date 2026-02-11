@@ -9,10 +9,13 @@
   import { playTTS } from "./inference";
   import { fromSafetensors, type PocketTTS } from "./pocket-tts";
 
-  // Cached large objects to download.
-  let _weights: safetensors.File | null = null;
-  let _model: any | null = null;
-  let _tokenizer: any | null = null;
+  const MODEL_WEIGHTS_URL =
+    "https://huggingface.co/ekzhang/jax-js-models/resolve/main/kyutai-pocket-tts_b6369a24-fp16.safetensors";
+
+  // Keep hydrated model/tokenizer in memory for this page session.
+  let _model: PocketTTS | null = null;
+  let _modelPromise: Promise<PocketTTS> | null = null;
+  let _tokenizer: tokenizers.Unigram | null = null;
 
   let downloadManager: DownloadManager;
 
@@ -104,31 +107,32 @@
   let activeMediaStream: MediaStream | null = null;
   let recordingStartedAtMs = 0;
 
-  async function downloadClipWeights(): Promise<safetensors.File> {
-    if (_weights) return _weights;
-    isDownloadingWeights = true;
-    try {
-      const weightsUrl =
-        "https://huggingface.co/ekzhang/jax-js-models/resolve/main/kyutai-pocket-tts_b6369a24-fp16.safetensors";
-
-      const data = await downloadManager.fetch("model weights", weightsUrl);
-      const result = safetensors.parse(data);
-      _weights = result;
-      return result;
-    } catch (error) {
-      alert("Error downloading weights: " + error);
-      throw error;
-    } finally {
-      isDownloadingWeights = false;
-    }
-  }
-
   async function getModel(): Promise<PocketTTS> {
     if (_model) return _model;
-    const weights = await downloadClipWeights();
-    _model = fromSafetensors(weights);
-    hasModel = true;
-    return _model;
+    if (_modelPromise) return _modelPromise;
+
+    _modelPromise = (async () => {
+      isDownloadingWeights = true;
+      try {
+        const data = await downloadManager.fetch("model weights", MODEL_WEIGHTS_URL);
+        // Build model directly from fetched bytes and avoid retaining parsed weight blobs.
+        const model = fromSafetensors(safetensors.parse(data));
+        _model = model;
+        hasModel = true;
+        return model;
+      } catch (error) {
+        alert("Error downloading weights: " + error);
+        throw error;
+      } finally {
+        isDownloadingWeights = false;
+      }
+    })();
+
+    try {
+      return await _modelPromise;
+    } finally {
+      _modelPromise = null;
+    }
   }
 
   async function getTokenizer(): Promise<tokenizers.Unigram> {
