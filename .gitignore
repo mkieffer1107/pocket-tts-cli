@@ -1,8 +1,8 @@
 # Project-generated outputs
-runs/
-voices/
-tts_output.wav
-media/
+/runs/
+/voices/
+/tts_output.wav
+/media/
 
 # Virtual environments
 .venv/
@@ -45,3 +45,8 @@ Thumbs.db
 *.tmp
 tmp/
 temp/
+
+# Web viewer (SvelteKit/Vite)
+site/node_modules/
+site/.svelte-kit/
+site/build/

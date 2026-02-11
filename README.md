@@ -6,6 +6,20 @@ This repo contains a generic pipeline script that:
 3. Saves reusable voice profiles in versioned folders (`runs/voice-clones/<voice>/<version>/`)
 4. Runs Kyutai Pocket TTS voice cloning (`pocket-tts`)
 
+---
+
+## Web Viewer (site)
+
+```bash
+cd site
+npm install
+npm run dev
+```
+
+Based on code for `jax-js` TTS: `https://jax-js.com/tts`.
+
+---
+
 ## Prerequisites
 
 - `uv`

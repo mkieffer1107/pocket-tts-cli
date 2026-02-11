@@ -9,6 +9,12 @@ This file keeps advanced operational details that were removed from `README.md` 
   - Equivalent explicit path: `uv run src/voice_workbench.py`
 - Direct pipeline:
   - `uv run src/pocket_tts_youtube_pipeline.py ...`
+- Web viewer:
+  - `cd site`
+  - `npm install`
+  - `npm run dev`
+
+The web viewer in `site/` is derived from the `jax-js` TTS implementation: `https://jax-js.com/tts`.
 
 Use `uv run` for this repo's tools. Use `uvx` only for one-off utilities such as Hugging Face login.
 

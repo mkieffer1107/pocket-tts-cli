@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "@fontsource-variable/tiktok-sans/standard.css";
+
+@theme {
+  --font-tiktok: "TikTok Sans Variable", var(--font-sans);
+  --color-primary: #96a026;
+}
+
+::selection {
+  background-color: #96a02640;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}

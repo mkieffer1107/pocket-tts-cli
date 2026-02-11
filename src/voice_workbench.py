@@ -268,37 +268,75 @@ def select_voice_profile(console: Console, output_root: Path) -> VoiceProfile | 
         )
         return None
 
-    table = Table(
-        title="Available Voice Profiles",
-        show_header=True,
-        header_style="bold magenta",
-        border_style="blue",
-    )
-    table.add_column("#", style="bold cyan", width=4, justify="right")
-    table.add_column("Voice")
-    table.add_column("Version", justify="right")
-    table.add_column("WAV", justify="center")
-    table.add_column("Safetensors", justify="center")
-    table.add_column("Directory", style="dim")
-    for index, profile in enumerate(profiles, start=1):
-        table.add_row(
-            str(index),
-            profile.base,
-            str(profile.version),
-            "yes" if profile.voice_wav.exists() else "no",
-            "yes" if profile.voice_safetensors.exists() else "no",
-            str(profile.directory),
-        )
-    console.print(table)
+    profiles_by_base: dict[str, list[VoiceProfile]] = {}
+    for profile in profiles:
+        profiles_by_base.setdefault(profile.base, []).append(profile)
 
+    voice_bases = list(profiles_by_base.keys())
     while True:
-        choice = IntPrompt.ask(
-            "Choose profile number",
-            default=1,
+        voices_table = Table(
+            title="Available Voices",
+            show_header=True,
+            header_style="bold magenta",
+            border_style="blue",
         )
-        if 1 <= choice <= len(profiles):
-            return profiles[choice - 1]
-        console.print(f"Enter a number between 1 and {len(profiles)}.", style="bold red")
+        voices_table.add_column("#", style="bold cyan", width=4, justify="right")
+        voices_table.add_column("Voice")
+        for index, base in enumerate(voice_bases, start=1):
+            voices_table.add_row(str(index), base)
+        console.print(voices_table)
+
+        base_choice_raw = Prompt.ask("Select voice # (blank to go back)", default="").strip()
+        if base_choice_raw == "":
+            return None
+        if not base_choice_raw.isdigit():
+            console.print("Enter a valid voice number.", style="bold red")
+            continue
+
+        base_choice = int(base_choice_raw)
+        if not 1 <= base_choice <= len(voice_bases):
+            console.print(f"Enter a number between 1 and {len(voice_bases)}.", style="bold red")
+            continue
+
+        selected_base = voice_bases[base_choice - 1]
+        selected_profiles = profiles_by_base[selected_base]
+
+        while True:
+            versions_table = Table(
+                title=f"Versions for {selected_base}",
+                show_header=True,
+                header_style="bold magenta",
+                border_style="blue",
+            )
+            versions_table.add_column("#", style="bold cyan", width=4, justify="right")
+            versions_table.add_column("Version", justify="right")
+            versions_table.add_column("WAV", justify="center")
+            versions_table.add_column("Safetensors", justify="center")
+            versions_table.add_column("Directory", style="dim")
+            for index, profile in enumerate(selected_profiles, start=1):
+                versions_table.add_row(
+                    str(index),
+                    str(profile.version),
+                    "yes" if profile.voice_wav.exists() else "no",
+                    "yes" if profile.voice_safetensors.exists() else "no",
+                    str(profile.directory),
+                )
+            console.print(versions_table)
+
+            version_choice_raw = Prompt.ask(
+                "Select version # (blank to choose another voice)",
+                default="",
+            ).strip()
+            if version_choice_raw == "":
+                break
+            if not version_choice_raw.isdigit():
+                console.print("Enter a valid version number.", style="bold red")
+                continue
+
+            version_choice = int(version_choice_raw)
+            if 1 <= version_choice <= len(selected_profiles):
+                return selected_profiles[version_choice - 1]
+            console.print(f"Enter a number between 1 and {len(selected_profiles)}.", style="bold red")
 
 
 def discover_voice_snippets(output_root: Path, profile: VoiceProfile) -> list[VoiceSnippet]:
