@@ -76,8 +76,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("runs"),
-        help="Pipeline output root. Default: runs",
+        default=Path("voices"),
+        help="Pipeline output root. Default: voices",
     )
     parser.add_argument(
         "--pipeline-script",
@@ -138,7 +138,7 @@ def detect_default_device() -> str:
 
 
 def discover_voice_profiles(output_root: Path) -> list[VoiceProfile]:
-    root = output_root / "voice-clones"
+    root = output_root
     if not root.exists():
         return []
 
@@ -263,7 +263,7 @@ def select_voice_profile(console: Console, output_root: Path) -> VoiceProfile | 
     profiles = discover_voice_profiles(output_root)
     if not profiles:
         console.print(
-            f"No voice profiles found under {output_root / 'voice-clones'}.",
+            f"No voice profiles found under {output_root}.",
             style="bold yellow",
         )
         return None
@@ -340,7 +340,7 @@ def select_voice_profile(console: Console, output_root: Path) -> VoiceProfile | 
 
 
 def discover_voice_snippets(output_root: Path, profile: VoiceProfile) -> list[VoiceSnippet]:
-    snippets_root = output_root / "voices" / profile.base / str(profile.version)
+    snippets_root = output_root / profile.base / str(profile.version) / "runs"
     if not snippets_root.exists():
         return []
 
@@ -462,7 +462,7 @@ def browse_snippets_flow(console: Console, args: argparse.Namespace, profile: Vo
     if not snippets:
         console.print(
             f"No generated snippets found for {profile.selector} under "
-            f"{args.output_root / 'voices' / profile.base / str(profile.version)}.",
+            f"{args.output_root / profile.base / str(profile.version) / 'runs'}.",
             style="bold yellow",
         )
         return

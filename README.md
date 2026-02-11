@@ -3,14 +3,26 @@
 This repo contains a generic pipeline script that:
 1. Ingests source audio from either a source URL (YouTube/Reddit/etc.) or a local media file.
 2. Extracts requested segments and converts the source to a mono WAV voice prompt (`ffmpeg`)
-3. Saves reusable voice profiles in versioned folders (`runs/voice-clones/<voice>/<version>/`)
+3. Saves reusable voice profiles in versioned folders (`voices/<voice>/<version>/`)
 4. Runs Kyutai Pocket TTS voice cloning (`pocket-tts`)
+5. Stores generation runs under each voice version (`voices/<voice>/<version>/runs/<timestamp>/`)
+
+Downloaded/cached source media is stored in `media/downloads/`.
+
+---
+
+## Start Here
+
+- **Web Viewer (recommended):** [Run the web viewer (clone + synthesize)](#web-viewer)
+- **Python setup + pipeline:** [Step-by-step setup](#step-by-step-setup)
+- **Interactive Python CLI:** [Option A: interactive CLI](#option-a-interactive-cli)
+- **Direct pipeline command:** [Option B: direct clone job command](#option-b-direct-clone-job-command)
 
 ---
 
 ## Web Viewer
 
-Play cloned voices through a local website.
+Recommended path for most users. Clone voices (from URL or local media), choose versions, and synthesize speech from the same UI.
 
 ```bash
 cd site
@@ -61,7 +73,7 @@ uvx hf auth login
 
 5. Choose one way to run your first clone:
 
-Option A: interactive CLI
+### Option A: interactive CLI
 
 ```bash
 uv run cli
@@ -72,7 +84,7 @@ From the menu, choose `Clone a new voice from URL` and use:
 - voice: `stefan`
 - start: `2:31`
 
-Option B: direct clone job command
+### Option B: direct clone job command
 
 ```bash
 uv run src/pocket_tts_youtube_pipeline.py \
@@ -123,8 +135,9 @@ uv run src/pocket_tts_youtube_pipeline.py \
 ```
 
 This creates reusable voice files:
-- `runs/voice-clones/stefan/1/voice.wav`
-- `runs/voice-clones/stefan/1/voice.safetensors`
+- `voices/stefan/1/voice.wav`
+- `voices/stefan/1/voice.safetensors`
+- `voices/stefan/1/runs/<timestamp>/cloned_output.wav` (when generation is enabled)
 
 6. Reuse the saved voice in future runs:
 

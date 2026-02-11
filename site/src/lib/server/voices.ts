@@ -11,17 +11,15 @@ export type LocalVoice = {
 const VOICE_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const VERSION_PATTERN = /^[1-9][0-9]*$/;
 
-export function resolveVoiceClonesRoot(): string {
-  const override = process.env.POCKET_TTS_VOICE_CLONES_DIR;
+export function resolveVoicesRoot(): string {
+  const override =
+    process.env.POCKET_TTS_VOICES_DIR ?? process.env.POCKET_TTS_VOICE_CLONES_DIR;
   if (override) {
     return path.resolve(override);
   }
 
   const cwd = process.cwd();
-  const candidates = [
-    path.resolve(cwd, "runs", "voice-clones"),
-    path.resolve(cwd, "..", "runs", "voice-clones"),
-  ];
+  const candidates = [path.resolve(cwd, "voices"), path.resolve(cwd, "..", "voices")];
   for (const candidate of candidates) {
     if (existsSync(candidate)) {
       return candidate;
@@ -39,9 +37,9 @@ export function isValidVersion(value: string): boolean {
 }
 
 export async function listLocalVoices(
-  voiceClonesRoot: string = resolveVoiceClonesRoot(),
+  voicesRoot: string = resolveVoicesRoot(),
 ): Promise<LocalVoice[]> {
-  const voiceEntries = await readdir(voiceClonesRoot, { withFileTypes: true }).catch(
+  const voiceEntries = await readdir(voicesRoot, { withFileTypes: true }).catch(
     () => [],
   );
   const voices: LocalVoice[] = [];
@@ -50,7 +48,7 @@ export async function listLocalVoices(
     if (!voiceEntry.isDirectory()) continue;
     if (!isValidVoiceName(voiceEntry.name)) continue;
 
-    const versionsDir = path.join(voiceClonesRoot, voiceEntry.name);
+    const versionsDir = path.join(voicesRoot, voiceEntry.name);
     const versionEntries = await readdir(versionsDir, { withFileTypes: true }).catch(
       () => [],
     );
@@ -67,7 +65,7 @@ export async function listLocalVoices(
         "voice.safetensors",
       );
       const absoluteSafetensorsPath = path.join(
-        voiceClonesRoot,
+        voicesRoot,
         relativeSafetensorsPath,
       );
       if (!existsSync(absoluteSafetensorsPath)) continue;

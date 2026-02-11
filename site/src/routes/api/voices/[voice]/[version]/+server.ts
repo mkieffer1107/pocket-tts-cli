@@ -6,8 +6,8 @@ import type { RequestHandler } from "./$types";
 import {
   isValidVersion,
   isValidVoiceName,
-  resolveVoiceClonesRoot,
-} from "$lib/server/voice-clones";
+  resolveVoicesRoot,
+} from "$lib/server/voices";
 
 export const GET: RequestHandler = async ({ params }) => {
   const { voice, version } = params;
@@ -15,9 +15,9 @@ export const GET: RequestHandler = async ({ params }) => {
     return new Response("Not found", { status: 404 });
   }
 
-  const voiceClonesRoot = resolveVoiceClonesRoot();
+  const voicesRoot = resolveVoicesRoot();
   const safetensorsPath = path.join(
-    voiceClonesRoot,
+    voicesRoot,
     voice,
     version,
     "voice.safetensors",

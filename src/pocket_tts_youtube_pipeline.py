@@ -59,6 +59,7 @@ PREDEFINED_VOICES = {
 VOICE_BASE_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 VOICE_SELECTOR_PATTERN = re.compile(r"^([A-Za-z0-9_]+)(?:-([1-9][0-9]*))?$")
 START_ONLY_DEFAULT_WINDOW_SECONDS = 30.0
+DEFAULT_DOWNLOAD_CACHE_DIR = Path("media") / "downloads"
 
 
 @dataclass
@@ -169,7 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--voice",
         help=(
             "Voice selector. With --source-url, use a base name like `goofy` to create "
-            "the next version under runs/voice-clones/goofy/<n>. Without --source-url, "
+            "the next version under voices/goofy/<n>. Without --source-url, "
             "use `goofy` (defaults to version 1), `goofy-1`, `goofy-2`, etc."
         ),
     )
@@ -188,8 +189,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("runs"),
-        help="Directory where run folders are created. Default: runs",
+        default=Path("voices"),
+        help="Directory where voice/version folders are created. Default: voices",
     )
     parser.add_argument(
         "--device",
@@ -623,11 +624,11 @@ def resolve_prompt_window(args: argparse.Namespace) -> tuple[float, float | None
 
 
 def clone_version_dir(output_root: Path, voice_base: str, version: int) -> Path:
-    return output_root / "voice-clones" / voice_base / str(version)
+    return output_root / voice_base / str(version)
 
 
 def next_clone_version(output_root: Path, voice_base: str) -> int:
-    base_dir = output_root / "voice-clones" / voice_base
+    base_dir = output_root / voice_base
     max_version = 0
     if base_dir.exists():
         for path in base_dir.iterdir():
@@ -637,7 +638,7 @@ def next_clone_version(output_root: Path, voice_base: str) -> int:
 
 
 def available_clone_versions(output_root: Path, voice_base: str) -> list[int]:
-    base_dir = output_root / "voice-clones" / voice_base
+    base_dir = output_root / voice_base
     versions: list[int] = []
     if base_dir.exists():
         for path in base_dir.iterdir():
@@ -651,7 +652,7 @@ def generation_run_dir(
 ) -> Path:
     timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     leaf = f"{sanitize_slug(run_name)}_{timestamp}" if run_name else timestamp
-    return output_root / "voices" / voice_base / str(version) / leaf
+    return clone_version_dir(output_root, voice_base, version) / "runs" / leaf
 
 
 def print_job_header(
@@ -1057,7 +1058,7 @@ def run_job(args: argparse.Namespace, job: Job, ordinal: int, total: int) -> Pat
             source_audio = job.source_path
         else:
             cached_source_stem = download_cache_stem(job.source_url)
-            cached_download_dir = args.output_root / "downloads"
+            cached_download_dir = DEFAULT_DOWNLOAD_CACHE_DIR
             source_audio = find_downloaded_audio(
                 cached_download_dir,
                 stem=cached_source_stem,

@@ -26,6 +26,14 @@
     version: number;
     url: string;
   };
+  type WorkflowMode = "synthesis" | "clone";
+  type CloneSourceMode = "url" | "file";
+  type CloneVoiceResponse = {
+    voiceName: string;
+    version: number;
+    cloneDir: string;
+  };
+  const CLONE_VOICE_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 
   let prompt = $state("The sun is shining, and the birds are singing.");
   let availableVoices = $state<LocalVoiceOption[]>([]);
@@ -40,6 +48,21 @@
   let seed = $state<number | null>(null);
   let temperature = $state(0.7);
   let lsdDecodeSteps = $state(1);
+
+  // Top-level workflow selector
+  let workflowMode = $state<WorkflowMode>("synthesis");
+
+  // Voice clone panel
+  let cloneSourceMode = $state<CloneSourceMode>("url");
+  let cloneSourceUrl = $state("");
+  let cloneSourceFile = $state<File | null>(null);
+  let cloneStart = $state("");
+  let cloneEnd = $state("");
+  let cloneVoiceName = $state("");
+  let cloneCacheDownloads = $state(true);
+  let cloning = $state(false);
+  let cloneError = $state<string | null>(null);
+  let cloneSuccess = $state<string | null>(null);
 
   async function downloadClipWeights(): Promise<safetensors.File> {
     if (_weights) return _weights;
@@ -136,6 +159,96 @@
     selectedVoiceVersion = defaultVersionForVoice(availableVoices, voiceName);
   }
 
+  function setWorkflowMode(mode: WorkflowMode) {
+    workflowMode = mode;
+  }
+
+  function setCloneSourceMode(mode: CloneSourceMode) {
+    cloneSourceMode = mode;
+    cloneError = null;
+    cloneSuccess = null;
+  }
+
+  function handleCloneFileChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    cloneSourceFile = input.files?.[0] ?? null;
+  }
+
+  async function submitCloneVoice() {
+    cloneError = null;
+    cloneSuccess = null;
+
+    const voiceName = cloneVoiceName.trim();
+    if (!CLONE_VOICE_NAME_PATTERN.test(voiceName) || voiceName.includes("-")) {
+      cloneError =
+        "Voice name must contain only letters, numbers, and underscores (no hyphens).";
+      return;
+    }
+    if (cloneSourceMode === "url" && cloneSourceUrl.trim() === "") {
+      cloneError = "Source URL is required.";
+      return;
+    }
+    if (cloneSourceMode === "file" && cloneSourceFile === null) {
+      cloneError = "Local source file is required.";
+      return;
+    }
+
+    cloning = true;
+    try {
+      const formData = new FormData();
+      formData.set("sourceMode", cloneSourceMode);
+      formData.set("voiceName", voiceName);
+      if (cloneSourceMode === "url") {
+        formData.set("sourceUrl", cloneSourceUrl.trim());
+      } else if (cloneSourceFile) {
+        formData.set("sourceFile", cloneSourceFile);
+      }
+      if (cloneStart.trim() !== "") {
+        formData.set("start", cloneStart.trim());
+      }
+      if (cloneEnd.trim() !== "") {
+        formData.set("end", cloneEnd.trim());
+      }
+      formData.set("cacheDownloads", String(cloneCacheDownloads));
+
+      const response = await fetch("/api/clone-voice", {
+        method: "POST",
+        body: formData,
+      });
+      const responseText = await response.text();
+      let payload: Record<string, unknown> = {};
+      if (responseText.trim() !== "") {
+        try {
+          payload = JSON.parse(responseText) as Record<string, unknown>;
+        } catch {
+          payload = { error: responseText };
+        }
+      }
+      if (!response.ok) {
+        const message =
+          typeof payload.error === "string"
+            ? payload.error
+            : `Voice cloning failed (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
+
+      const result = payload as unknown as CloneVoiceResponse;
+      cloneSuccess = `Saved ${result.voiceName}/v${result.version} at ${result.cloneDir}`;
+      await loadVoices();
+      selectedVoiceName = result.voiceName;
+      selectedVoiceVersion = String(result.version);
+      cloneSourceUrl = "";
+      cloneSourceFile = null;
+      cloneStart = "";
+      cloneEnd = "";
+      cloneVoiceName = "";
+    } catch (error) {
+      cloneError = error instanceof Error ? error.message : "Voice cloning failed.";
+    } finally {
+      cloning = false;
+    }
+  }
+
   onMount(() => {
     void loadVoices();
   });
@@ -193,7 +306,7 @@
     );
     if (!selectedVoiceOption) {
       throw new Error(
-        "No cloned voice embedding selected. Create a voice clone first in runs/voice-clones.",
+        "No cloned voice embedding selected. Create a voice clone first in voices/<name>/<version>.",
       );
     }
 
@@ -231,8 +344,8 @@
 
 <DownloadManager bind:this={downloadManager} />
 
-<main class="mx-4 my-8">
-  <h1 class="text-2xl font-semibold mb-1">
+<main class="mx-4 py-8 min-h-screen flex flex-col items-center justify-center">
+  <h1 class="text-2xl font-semibold mb-1 text-center">
     Kyutai Pocket TTS
     <a
       target="_blank"
@@ -241,139 +354,275 @@
       <GithubIcon class="inline-block ml-2 -mt-1" />
     </a>
   </h1>
-  <p class="text-lg text-gray-500">
+  <p class="text-lg text-gray-500 text-center max-w-2xl">
     Text-to-speech AI voice model, running in your browser with <a
       href="https://jax-js.com/"
       class="text-primary hover:underline">jax-js</a
     >.
   </p>
 
-  <form
-    class="mt-6"
-    onsubmit={async (event) => {
-      event.preventDefault();
-      audioBlob = null;
-      playing = true;
-      try {
-        await run();
-      } finally {
-        playing = false;
-      }
-    }}
-  >
-    <textarea
-      class="border-2 rounded p-2 w-full max-w-md"
-      rows={6}
-      placeholder="Enter your prompt here…"
-      bind:value={prompt}
-    ></textarea>
-
-    <div class="flex gap-3 mt-1 h-9">
-      <select
-        class="border-2 rounded p-1"
-        bind:value={selectedVoiceName}
-        onchange={(event) =>
-          handleVoiceNameChange((event.currentTarget as HTMLSelectElement).value)}
-        disabled={loadingVoices || availableVoices.length === 0}
-      >
-        {#each voiceNames as voiceName}
-          <option value={voiceName}>{voiceName}</option>
-        {/each}
-      </select>
-      <select
-        class="border-2 rounded p-1"
-        bind:value={selectedVoiceVersion}
-        disabled={loadingVoices || availableVoices.length === 0}
-      >
-        {#each selectedVoiceVersions as voice}
-          <option value={String(voice.version)}>v{voice.version}</option>
-        {/each}
-      </select>
+  <div class="mt-6 w-full max-w-2xl flex flex-col items-center">
+    <div class="inline-flex w-full max-w-md border-2 border-black rounded-md overflow-hidden">
       <button
-        class="btn"
-        type="submit"
-        disabled={
-          playing ||
-          prompt.trim() === "" ||
-          loadingVoices ||
-          availableVoices.length === 0
-        }
+        type="button"
+        class={`mode-btn ${workflowMode === "synthesis" ? "mode-btn-active" : ""}`}
+        onclick={() => setWorkflowMode("synthesis")}
       >
-        {#if playing}
-          <AudioLinesIcon size={20} class="animate-pulse" />
-        {:else}
-          Play
-        {/if}
+        Voice Synthesis
       </button>
-
-      {#if audioBlob}
-        <a
-          class="btn"
-          href={URL.createObjectURL(audioBlob)}
-          download="tts_output.wav"
-        >
-          <DownloadIcon size={20} />
-        </a>
-      {/if}
+      <button
+        type="button"
+        class={`mode-btn ${workflowMode === "clone" ? "mode-btn-active" : ""}`}
+        onclick={() => setWorkflowMode("clone")}
+      >
+        Voice Cloning
+      </button>
     </div>
 
-    {#if loadingVoices}
-      <p class="mt-2 text-sm text-gray-600">Loading cloned voices...</p>
-    {:else if voicesError}
-      <p class="mt-2 text-sm text-red-600">{voicesError}</p>
-    {:else if availableVoices.length === 0}
-      <p class="mt-2 text-sm text-gray-600">
-        No cloned voices found in <code>runs/voice-clones</code>.
-      </p>
-    {/if}
-
-    <details class="mt-8 max-w-md">
-      <summary class="cursor-pointer text-gray-600 hover:text-gray-800"
-        >Advanced options</summary
+    <div class="mt-4 w-full max-w-md workflow-shell">
+      {#if workflowMode === "synthesis"}
+      <form
+        class="w-full"
+        onsubmit={async (event) => {
+          event.preventDefault();
+          audioBlob = null;
+          playing = true;
+          try {
+            await run();
+          } finally {
+            playing = false;
+          }
+        }}
       >
-      <div class="mt-3 space-y-4 pl-2">
-        <div>
-          <label class="block text-sm text-gray-700">
-            Seed
-            <input
-              type="number"
-              class="block mt-1 border-2 rounded p-1 w-32"
-              placeholder="(random)"
-              bind:value={seed}
-            />
-          </label>
+        <textarea
+          class="border-2 rounded p-2 w-full"
+          rows={6}
+          placeholder="Enter your prompt here…"
+          bind:value={prompt}
+        ></textarea>
+
+        <div class="flex gap-3 mt-1 h-9 flex-wrap justify-center">
+          <select
+            class="border-2 rounded p-1"
+            bind:value={selectedVoiceName}
+            onchange={(event) =>
+              handleVoiceNameChange((event.currentTarget as HTMLSelectElement).value)}
+            disabled={loadingVoices || availableVoices.length === 0}
+          >
+            {#each voiceNames as voiceName}
+              <option value={voiceName}>{voiceName}</option>
+            {/each}
+          </select>
+          <select
+            class="border-2 rounded p-1"
+            bind:value={selectedVoiceVersion}
+            disabled={loadingVoices || availableVoices.length === 0}
+          >
+            {#each selectedVoiceVersions as voice}
+              <option value={String(voice.version)}>v{voice.version}</option>
+            {/each}
+          </select>
+          <button
+            class="btn"
+            type="submit"
+            disabled={
+              playing ||
+              prompt.trim() === "" ||
+              loadingVoices ||
+              availableVoices.length === 0
+            }
+          >
+            {#if playing}
+              <AudioLinesIcon size={20} class="animate-pulse" />
+            {:else}
+              Play
+            {/if}
+          </button>
+
+          {#if audioBlob}
+            <a
+              class="btn"
+              href={URL.createObjectURL(audioBlob)}
+              download="tts_output.wav"
+            >
+              <DownloadIcon size={20} />
+            </a>
+          {/if}
         </div>
 
-        <div>
-          <label class="block text-sm text-gray-700">
-            Temperature: {temperature.toFixed(2)}
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              class="mt-1 w-full"
-              bind:value={temperature}
-            />
-          </label>
-        </div>
+        {#if loadingVoices}
+          <p class="mt-2 text-sm text-gray-600 text-center">Loading cloned voices...</p>
+        {:else if voicesError}
+          <p class="mt-2 text-sm text-red-600 text-center">{voicesError}</p>
+        {:else if availableVoices.length === 0}
+          <p class="mt-2 text-sm text-gray-600 text-center">
+            No cloned voices found in <code>voices</code>.
+          </p>
+        {/if}
 
-        <div>
+        <details class="mt-8 w-full">
+          <summary class="cursor-pointer text-gray-600 hover:text-gray-800"
+            >Advanced options</summary
+          >
+          <div class="mt-3 space-y-4 pl-2">
+            <div>
+              <label class="block text-sm text-gray-700">
+                Seed
+                <input
+                  type="number"
+                  class="block mt-1 border-2 rounded p-1 w-32"
+                  placeholder="(random)"
+                  bind:value={seed}
+                />
+              </label>
+            </div>
+
+            <div>
+              <label class="block text-sm text-gray-700">
+                Temperature: {temperature.toFixed(2)}
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  class="mt-1 w-full"
+                  bind:value={temperature}
+                />
+              </label>
+            </div>
+
+            <div>
+              <label class="block text-sm text-gray-700">
+                LSD Decode Steps: {lsdDecodeSteps}
+                <input
+                  type="range"
+                  min="1"
+                  max="4"
+                  step="1"
+                  class="mt-1 w-full"
+                  bind:value={lsdDecodeSteps}
+                />
+              </label>
+            </div>
+          </div>
+        </details>
+      </form>
+      {:else}
+        <section class="border-2 border-black rounded-lg p-4 bg-white/80 w-full">
+        <h2 class="text-lg font-semibold text-center">Clone Voice</h2>
+        <p class="text-sm text-gray-600 mt-1 text-center">
+          Add new voice embeddings to <code>voices/&lt;name&gt;/&lt;version&gt;</code>.
+        </p>
+
+        <form
+          class="mt-4 space-y-3"
+          onsubmit={async (event) => {
+            event.preventDefault();
+            await submitCloneVoice();
+          }}
+        >
+          <div class="inline-flex w-full border-2 border-black rounded-md overflow-hidden">
+            <button
+              type="button"
+              class={`mode-btn ${cloneSourceMode === "url" ? "mode-btn-active" : ""}`}
+              onclick={() => setCloneSourceMode("url")}
+              disabled={cloning}
+            >
+              Video URL
+            </button>
+            <button
+              type="button"
+              class={`mode-btn ${cloneSourceMode === "file" ? "mode-btn-active" : ""}`}
+              onclick={() => setCloneSourceMode("file")}
+              disabled={cloning}
+            >
+              Local file
+            </button>
+          </div>
+
+          {#if cloneSourceMode === "url"}
+            <label class="block text-sm text-gray-700">
+              Source URL
+              <input
+                type="url"
+                class="block mt-1 w-full border-2 rounded p-2"
+                placeholder="https://www.youtube.com/watch?v=..."
+                bind:value={cloneSourceUrl}
+                disabled={cloning}
+              />
+            </label>
+          {:else}
+            <label class="block text-sm text-gray-700">
+              Local media file
+              <input
+                type="file"
+                class="block mt-1 w-full border-2 rounded p-2 text-sm"
+                accept=".wav,.mp3,.m4a,.mp4,.webm,.opus,.aac,.flac"
+                onchange={handleCloneFileChange}
+                disabled={cloning}
+              />
+            </label>
+          {/if}
+
+          <div class="grid grid-cols-2 gap-2">
+            <label class="block text-sm text-gray-700">
+              Start (optional)
+              <input
+                type="text"
+                class="block mt-1 w-full border-2 rounded p-2"
+                placeholder="2:31"
+                bind:value={cloneStart}
+                disabled={cloning}
+              />
+            </label>
+            <label class="block text-sm text-gray-700">
+              End (optional)
+              <input
+                type="text"
+                class="block mt-1 w-full border-2 rounded p-2"
+                placeholder="2:45"
+                bind:value={cloneEnd}
+                disabled={cloning}
+              />
+            </label>
+          </div>
+
           <label class="block text-sm text-gray-700">
-            LSD Decode Steps: {lsdDecodeSteps}
+            Voice name
             <input
-              type="range"
-              min="1"
-              max="4"
-              step="1"
-              class="mt-1 w-full"
-              bind:value={lsdDecodeSteps}
+              type="text"
+              class="block mt-1 w-full border-2 rounded p-2"
+              placeholder="stefan"
+              bind:value={cloneVoiceName}
+              disabled={cloning}
             />
           </label>
-        </div>
-      </div>
-    </details>
-  </form>
+
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input
+              type="checkbox"
+              class="mt-1 accent-black"
+              bind:checked={cloneCacheDownloads}
+              disabled={cloning || cloneSourceMode !== "url"}
+            />
+            <span>Cache source downloads in <code>media/downloads</code></span>
+          </label>
+
+          <button class="btn w-full justify-center" type="submit" disabled={cloning}>
+            {cloning ? "Cloning..." : "Clone voice"}
+          </button>
+        </form>
+
+        {#if cloneError}
+          <p class="mt-3 text-sm text-red-600 whitespace-pre-wrap">{cloneError}</p>
+        {/if}
+        {#if cloneSuccess}
+          <p class="mt-3 text-sm text-green-700">{cloneSuccess}</p>
+        {/if}
+        </section>
+      {/if}
+    </div>
+  </div>
 </main>
 
 <style lang="postcss">
@@ -383,5 +632,19 @@
     @apply flex items-center justify-center gap-2 px-3 rounded py-1 border-2 border-black;
     @apply disabled:opacity-50 disabled:cursor-wait transition-colors;
     @apply not-disabled:hover:bg-black not-disabled:hover:text-white;
+  }
+
+  .mode-btn {
+    @apply flex-1 px-3 py-1 text-sm transition-colors bg-white text-black;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply not-disabled:hover:bg-black not-disabled:hover:text-white;
+  }
+
+  .mode-btn-active {
+    @apply bg-black text-white;
+  }
+
+  .workflow-shell {
+    min-height: clamp(32rem, 62vh, 38rem);
   }
 </style>

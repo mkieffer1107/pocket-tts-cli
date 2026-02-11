@@ -2,12 +2,12 @@ import type { RequestHandler } from "./$types";
 
 import {
   listLocalVoices,
-  resolveVoiceClonesRoot,
-} from "$lib/server/voice-clones";
+  resolveVoicesRoot,
+} from "$lib/server/voices";
 
 export const GET: RequestHandler = async () => {
-  const voiceClonesRoot = resolveVoiceClonesRoot();
-  const voices = await listLocalVoices(voiceClonesRoot);
+  const voicesRoot = resolveVoicesRoot();
+  const voices = await listLocalVoices(voicesRoot);
 
   const payload = voices.map((voice) => ({
     name: voice.name,

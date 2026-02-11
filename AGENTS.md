@@ -25,7 +25,7 @@ Use `uv run` for this repo's tools. Use `uvx` only for one-off utilities such as
   - Browse existing voices/snippets and generate new snippets
   - Upload `voice.safetensors` to Hugging Face
 - Useful CLI options:
-  - `--output-root runs`
+  - `--output-root voices`
   - `--dry-run`
   - `--verbose-pipeline`
   - `--device <name>`
@@ -52,15 +52,15 @@ Use `uv run` for this repo's tools. Use `uvx` only for one-off utilities such as
 ## Artifacts And Caching
 
 - Clone artifacts:
-  - `runs/voice-clones/<voice>/<version>/voice_prompt.wav`
-  - `runs/voice-clones/<voice>/<version>/voice.wav`
-  - `runs/voice-clones/<voice>/<version>/voice.safetensors`
-  - `runs/voice-clones/<voice>/<version>/run_manifest.json`
+  - `voices/<voice>/<version>/voice_prompt.wav`
+  - `voices/<voice>/<version>/voice.wav`
+  - `voices/<voice>/<version>/voice.safetensors`
+  - `voices/<voice>/<version>/run_manifest.json`
 - Generated outputs:
-  - `runs/voices/<voice>/<version>/<timestamp>/cloned_output.wav`
-  - `runs/voices/<voice>/<version>/<timestamp>/run_manifest.json`
+  - `voices/<voice>/<version>/runs/<timestamp>/cloned_output.wav`
+  - `voices/<voice>/<version>/runs/<timestamp>/run_manifest.json`
 - Download cache:
-  - `runs/downloads/source_<hash>.<ext>`
+  - `media/downloads/source_<hash>.<ext>`
   - Reused across runs for the same source URL.
 
 ## Additional Examples
