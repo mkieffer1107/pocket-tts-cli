@@ -1,4 +1,4 @@
-# Pocket TTS URL Voice-Cloning Pipeline
+# Pocket TTS Voice-Cloning Pipeline
 
 This repo contains a generic pipeline script that:
 1. Downloads audio from a source URL (YouTube/Reddit/etc.) or file as MP3.
