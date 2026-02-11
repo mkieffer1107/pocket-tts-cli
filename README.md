@@ -45,7 +45,8 @@ uvx hf auth login
 
 5. Choose one way to run your first clone:
 
-Option A: interactive CLI
+<details>
+<summary>Option A: interactive CLI</summary>
 
 ```bash
 uv run cli
@@ -56,7 +57,10 @@ From the menu, choose `Clone a new voice from URL` and use:
 - voice: `stefan`
 - start: `2:31`
 
-Option B: direct clone job command
+</details>
+
+<details>
+<summary>Option B: direct clone job command</summary>
 
 ```bash
 uv run src/pocket_tts_youtube_pipeline.py \
@@ -66,6 +70,8 @@ uv run src/pocket_tts_youtube_pipeline.py \
   --text "This line is synthesized in the cloned voice." \
   --device cpu
 ```
+
+</details>
 
 `--source-url` supports YouTube and Reddit media URLs (including `v.redd.it` HLS links).
 Use `--source-file` to clone from a local MP3/WAV instead of downloading.
