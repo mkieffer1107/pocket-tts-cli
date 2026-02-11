@@ -30,7 +30,7 @@ npm install
 npm run dev
 ```
 
-Based on code for `jax-js` TTS: `https://jax-js.com/tts`.
+Based on code for `jax-js` TTS: [https://jax-js.com/tts](https://jax-js.com/tts).
 
 ---
 
