@@ -8,7 +8,7 @@ This repo contains a generic pipeline script that:
 
 ---
 
-## Web Viewer (site)
+## Web Viewer
 
 ```bash
 cd site
