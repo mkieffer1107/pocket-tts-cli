@@ -1,14 +1,10 @@
 # Pocket TTS URL Voice-Cloning Pipeline
 
 This repo contains a generic pipeline script that:
-1. Downloads audio from a source URL (YouTube/Reddit/etc.) as MP3 (`yt-dlp`)
+1. Downloads audio from a source URL (YouTube/Reddit/etc.) or file as MP3.
 2. Converts it to a mono WAV voice prompt (`ffmpeg`)
 3. Saves reusable voice profiles in versioned folders (`runs/voice-clones/<voice>/<version>/`)
 4. Runs Kyutai Pocket TTS voice cloning (`pocket-tts`)
-
-Script: `src/pocket_tts_youtube_pipeline.py`
-
-Interactive helper: `src/voice_workbench.py`
 
 ## Prerequisites
 
